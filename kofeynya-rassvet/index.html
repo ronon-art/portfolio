@@ -8,7 +8,7 @@
 <script>
 /* VK Mini Apps adapter: exposes a YaGames-compatible object backed by VK Bridge. */
 (function(){
-  var B=null,handlers={},CH=4000,
+  var B=null,handlers={},CH=4000,lastAd=0,started=Date.now(),
       SRC=['https://cdn.jsdelivr.net/npm/@vkontakte/vk-bridge@2.15.12/dist/browser.min.js','https://unpkg.com/@vkontakte/vk-bridge@2.15.12/dist/browser.min.js'];
   function load(src){return new Promise(function(res,rej){var s=document.createElement('script');s.src=src;s.async=true;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
   function bridge(){
@@ -43,6 +43,7 @@
     getLeaderboards:function(){return Promise.reject(new Error('leaderboards off'));},
     adv:{
       showFullscreenAdv:function(o){var c=(o&&o.callbacks)||{};
+        var now=Date.now();if(now-lastAd<35000||now-started<60000){c.onClose&&c.onClose(false);return;}lastAd=now;
         timeout(send('VKWebAppCheckNativeAds',{ad_format:'interstitial'}),5000).then(function(r){
           if(!r||!r.result)throw new Error('no ad');c.onOpen&&c.onOpen();
           return send('VKWebAppShowNativeAds',{ad_format:'interstitial'});
