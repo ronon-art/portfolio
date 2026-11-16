@@ -5,18 +5,26 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Кофейня «Рассвет»</title>
 <script>window.__RELEASE=true;window.__PLATFORM='vk';</script>
+<script src="vk-bridge.min.js"></script>
 <script>
-/* VK Mini Apps adapter: exposes a YaGames-compatible object backed by VK Bridge. */
+/* VK Mini Apps adapter: exposes a YaGames-compatible object backed by VK Bridge (bundled locally, CDN as fallback). */
 (function(){
-  var B=null,handlers={},CH=4000,lastAd=0,started=Date.now(),
+  var B=window.vkBridge||null,handlers={},CH=4000,inited=null,ready={reward:false,interstitial:false},
       SRC=['https://cdn.jsdelivr.net/npm/@vkontakte/vk-bridge@2.15.12/dist/browser.min.js','https://unpkg.com/@vkontakte/vk-bridge@2.15.12/dist/browser.min.js'];
   function load(src){return new Promise(function(res,rej){var s=document.createElement('script');s.src=src;s.async=true;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
   function bridge(){
     if(B)return Promise.resolve(B);
+    if(window.vkBridge){B=window.vkBridge;return Promise.resolve(B);}
     return load(SRC[0]).catch(function(){return load(SRC[1]);}).then(function(){B=window.vkBridge;if(!B)throw new Error('no bridge');return B;});
   }
-  function send(m,p){return bridge().then(function(b){return b.send(m,p||{});});}
   function timeout(p,ms){return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(new Error('timeout'));},ms);})]);}
+  function init(){if(!inited)inited=bridge().then(function(b){return b.send('VKWebAppInit',{});});return inited;}
+  function send(m,p){return init().catch(function(){}).then(function(){return bridge();}).then(function(b){return b.send(m,p||{});});}
+  /* preload ad materials (VK requires a check before offering rewarded ads) */
+  function check(fmt){return timeout(send('VKWebAppCheckNativeAds',{ad_format:fmt}),10000).then(function(r){ready[fmt]=!!(r&&r.result);return ready[fmt];}).catch(function(){ready[fmt]=false;return false;});}
+  function preload(){check('reward');setTimeout(function(){check('interstitial');},1500);}
+  init().then(preload).catch(function(){});
+  setInterval(function(){if(!ready.reward)check('reward');if(!ready.interstitial)check('interstitial');},30000);
   var player={
     getData:function(){
       return timeout(send('VKWebAppStorageGet',{keys:['cafe_n']}),8000).then(function(r){
@@ -35,6 +43,7 @@
         .then(function(){return send('VKWebAppStorageSet',{key:'cafe_n',value:String(parts.length)});});
     }
   };
+  function show(fmt){ready[fmt]=false;return timeout(send('VKWebAppShowNativeAds',{ad_format:fmt}),90000).then(function(r){setTimeout(function(){check(fmt);},1000);return r;},function(e){setTimeout(function(){check(fmt);},1000);throw e;});}
   var sdk={
     on:function(ev,fn){handlers[ev]=fn;},
     features:{LoadingAPI:{ready:function(){}},GameplayAPI:{start:function(){},stop:function(){}}},
@@ -43,21 +52,22 @@
     getLeaderboards:function(){return Promise.reject(new Error('leaderboards off'));},
     adv:{
       showFullscreenAdv:function(o){var c=(o&&o.callbacks)||{};
-        var now=Date.now();if(now-lastAd<35000||now-started<60000){c.onClose&&c.onClose(false);return;}lastAd=now;
-        timeout(send('VKWebAppCheckNativeAds',{ad_format:'interstitial'}),5000).then(function(r){
-          if(!r||!r.result)throw new Error('no ad');c.onOpen&&c.onOpen();
-          return send('VKWebAppShowNativeAds',{ad_format:'interstitial'});
+        (ready.interstitial?Promise.resolve(true):check('interstitial')).then(function(ok){
+          if(!ok)throw new Error('no ad');c.onOpen&&c.onOpen();return show('interstitial');
         }).then(function(){c.onClose&&c.onClose(true);}).catch(function(e){if(c.onError)c.onError(e);else if(c.onClose)c.onClose(false);});
       },
-      showRewardedVideo:function(o){var c=(o&&o.callbacks)||{};c.onOpen&&c.onOpen();
-        timeout(send('VKWebAppShowNativeAds',{ad_format:'reward'}),60000).then(function(r){
-          if(r&&r.result)c.onRewarded&&c.onRewarded();c.onClose&&c.onClose();
+      showRewardedVideo:function(o){var c=(o&&o.callbacks)||{};
+        (ready.reward?Promise.resolve(true):check('reward')).then(function(){
+          c.onOpen&&c.onOpen();return show('reward');
+        }).then(function(r){
+          if(r&&r.result){c.onRewarded&&c.onRewarded();c.onClose&&c.onClose();}
+          else if(c.onError)c.onError(new Error('not shown'));else c.onClose&&c.onClose();
         }).catch(function(e){c.onError&&c.onError(e);});
       }
     }
   };
   window.YaGames={init:function(){
-    return timeout(send('VKWebAppInit'),8000).then(function(){
+    return timeout(init(),8000).then(function(){
       try{B.subscribe(function(e){var t=e&&e.detail&&e.detail.type;
         if(t==='VKWebAppViewHide'&&handlers.game_api_pause)handlers.game_api_pause();
         if(t==='VKWebAppViewRestore'&&handlers.game_api_resume)handlers.game_api_resume();});}catch(e){}
